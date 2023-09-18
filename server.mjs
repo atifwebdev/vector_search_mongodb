@@ -2,7 +2,9 @@ import express from "express";
 import { MongoClient, ObjectId } from "mongodb";
 import OpenAI from "openai";
 import cors from 'cors';
-import './config/index.mjs'
+import './config/index.mjs';
+import path from 'path';
+const __dirname = path.resolve();
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
@@ -32,11 +34,12 @@ app.use(cors([]));
 
 
 // server API root path
-app.get("/", (req, res) => {
-  res.send("My CRUD app using Mongodb and Vector Search of Open AI");
-});
+// app.get("/", (req, res) => {
+//   res.send("My CRUD app using Mongodb and Vector Search of Open AI");
+// });
 
-
+app.get(express.static(path.join(__dirname, "/web/build")));
+app.use("/", express.static(path.join(__dirname, "/web/build")));
 
 
 // Get Data Request
@@ -58,6 +61,46 @@ app.get("/api/v1/stories", async (req, res) => {
 
 
 
+// Vector Search Request
+app.get("/api/v1/search", async (req, res) => {
+
+  const queryText = req.query.q;
+
+  const response = await openai.embeddings.create({
+    model: "text-embedding-ada-002",
+    input: queryText,
+  });
+  const vector = response?.data[0]?.embedding
+  console.log("vector: ", vector);
+  // [ 0.0023063174, -0.009358601, 0.01578391, ... , 0.01678391, ]
+
+
+  const documents = await postCollection.aggregate([
+    {
+      "$search": {
+        "index": "default",
+        "knnBeta": {
+          "vector": vector,
+          "path": "plot_embedding",
+          "k": 100
+        },
+        "scoreDetails": true
+      }
+    },
+    {
+      "$project": {
+        "plot_embedding": 0,
+        "score": { "$meta": "searchScore" },
+        "scoreDetails": { "$meta": "searchScoreDetails" }
+      },
+
+    }
+  ]).toArray();
+
+  res.send(documents)
+});
+
+
 
 // Post Data Request
 app.post("/api/v1/story", async (req, res) => {
@@ -67,7 +110,7 @@ app.post("/api/v1/story", async (req, res) => {
       title: req?.body?.title,
       body: req?.body?.body,
       $currentDate: {
-        createdOn: true
+        createdOn: new Date()
       },
     }
 
